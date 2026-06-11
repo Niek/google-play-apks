@@ -1,0 +1,16 @@
+{
+  "name": "google-play-apks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "check": "wrangler deploy --dry-run && tsc --noEmit",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.99.0"
+  }
+}
