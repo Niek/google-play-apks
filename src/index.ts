@@ -90,14 +90,21 @@ function shell(title: string, body: string): string {
   <link rel="stylesheet" href="${BULMA_CSS}">
 </head>
 <body>
-  <section class="section">
+  <nav class="navbar is-link" role="navigation" aria-label="main navigation">
     <div class="container">
+      <div class="navbar-brand">
+        <a class="navbar-item has-text-weight-bold" href="/">&#128230;&nbsp;Google Play APKs</a>
+      </div>
+    </div>
+  </nav>
+  <section class="section">
+    <div class="container is-max-desktop">
       ${body}
     </div>
   </section>
   <footer class="footer">
-    <div class="content has-text-centered is-size-7">
-      <a href="${GITHUB_URL}">Niek/google-play-apks</a>
+    <div class="content has-text-centered is-size-7 has-text-grey">
+      <a href="${GITHUB_URL}">Niek/google-play-apks</a> &middot; not affiliated with Google
     </div>
   </footer>
   <script>
@@ -119,33 +126,43 @@ function shell(title: string, body: string): string {
 
 function homeView(query: string, country: PlayCountry, apps: PlayApp[]): string {
   return `
-    <h1 class="title">Google Play APKs</h1>
-    <form class="field has-addons" method="get" action="/">
-      <div class="control is-expanded">
-        <input class="input" type="search" name="q" value="${escapeAttribute(query)}" placeholder="Search Google Play apps" autofocus>
-      </div>
-      <div class="control">
-        <div class="select">
-          <select name="gl" aria-label="Google Play country">
-            ${countryOptions(country)}
-          </select>
+    <h1 class="title">Search Google Play</h1>
+    <p class="subtitle is-6 has-text-grey">Look up apps and fetch APK download URLs straight from Google Play.</p>
+    <form class="box" method="get" action="/">
+      <div class="field has-addons">
+        <div class="control is-expanded">
+          <input class="input" type="search" name="q" value="${escapeAttribute(query)}" placeholder="App name or package" autofocus>
+        </div>
+        <div class="control">
+          <div class="select">
+            <select name="gl" aria-label="Google Play country">
+              ${countryOptions(country)}
+            </select>
+          </div>
+        </div>
+        <div class="control">
+          <button class="button is-link" type="submit">Search</button>
         </div>
       </div>
-      <div class="control">
-        <button class="button is-link" type="submit">Search</button>
-      </div>
     </form>
-    ${query ? resultsView(query, country, apps) : `<p class="has-text-grey">Search for an app to start.</p>`}
+    ${query ? resultsView(query, country, apps) : `
+    <div class="has-text-centered py-6">
+      <p class="title is-4 has-text-grey-light">Nothing here yet</p>
+      <p class="has-text-grey">Search for an app to get started.</p>
+    </div>`}
   `;
 }
 
 function resultsView(query: string, country: PlayCountry, apps: PlayApp[]): string {
   if (apps.length === 0) {
-    return `<p>No apps found for <strong>${escapeHtml(query)}</strong>.</p>`;
+    return `<div class="notification is-warning is-light">No apps found for <strong>${escapeHtml(query)}</strong>.</div>`;
   }
 
   return `
-    <h2 class="subtitle">Results for <strong>${escapeHtml(query)}</strong> in ${escapeHtml(country)}</h2>
+    <h2 class="subtitle is-6 has-text-grey">
+      ${apps.length} result${apps.length === 1 ? "" : "s"} for <strong>${escapeHtml(query)}</strong>
+      <span class="tag is-light">${escapeHtml(country)}</span>
+    </h2>
     <div class="fixed-grid has-1-cols">
       <div class="grid">
         ${apps.map((app) => resultCard(app, country)).join("")}
@@ -162,12 +179,15 @@ function resultCard(app: PlayApp, country: PlayCountry): string {
           ${app.iconUrl ? `<figure class="image is-64x64"><img src="${escapeAttribute(app.iconUrl)}" alt=""></figure>` : ""}
         </div>
         <div class="media-content">
-          <p class="title is-5"><a href="/app/${encodeURIComponent(app.packageName)}?gl=${country}">${escapeHtml(app.name)}</a></p>
-          <p class="subtitle is-6">${escapeHtml(app.developer)} · ${escapeHtml(app.packageName)}</p>
-          <p>${escapeHtml(plainTextFromPlayHtml(app.shortDescription))}</p>
-          <p class="is-size-7 has-text-grey">
-            ${escapeHtml(app.versionName || "unknown version")} · ${escapeHtml(app.updatedOn || "unknown date")}
+          <p class="title is-5 mb-1"><a href="/app/${encodeURIComponent(app.packageName)}?gl=${country}">${escapeHtml(app.name)}</a></p>
+          <p class="is-size-7 has-text-grey mb-2">
+            ${escapeHtml(app.developer)} &middot; <span class="is-family-monospace">${escapeHtml(app.packageName)}</span>
           </p>
+          <p class="mb-2">${escapeHtml(plainTextFromPlayHtml(app.shortDescription))}</p>
+          <div class="tags">
+            <span class="tag is-link is-light">${escapeHtml(app.versionName || "unknown version")}</span>
+            <span class="tag is-light">${escapeHtml(app.updatedOn || "unknown date")}</span>
+          </div>
         </div>
       </div>
     </article>
@@ -176,38 +196,55 @@ function resultCard(app: PlayApp, country: PlayCountry): string {
 
 function appPage(app: PlayApp, country: PlayCountry): string {
   return shell(app.name, `
-    <p><a href="/?gl=${country}">Back to search</a></p>
+    <nav class="breadcrumb is-small" aria-label="breadcrumbs">
+      <ul>
+        <li><a href="/?gl=${country}">Search</a></li>
+        <li class="is-active"><a href="#" aria-current="page">${escapeHtml(app.name)}</a></li>
+      </ul>
+    </nav>
     <div class="media">
       <div class="media-left">
         ${app.iconUrl ? `<figure class="image is-96x96"><img src="${escapeAttribute(app.iconUrl)}" alt=""></figure>` : ""}
       </div>
       <div class="media-content">
-        <h1 class="title">${escapeHtml(app.name)}</h1>
-        <p class="subtitle">${escapeHtml(app.developer)} · <code>${escapeHtml(app.packageName)}</code></p>
+        <h1 class="title mb-2">${escapeHtml(app.name)}</h1>
+        <p class="subtitle is-6 has-text-grey mb-2">
+          ${escapeHtml(app.developer)} &middot; <span class="is-family-monospace">${escapeHtml(app.packageName)}</span>
+        </p>
+        <div class="tags">
+          <span class="tag is-link is-light">${escapeHtml(app.category || "Unknown category")}</span>
+          <span class="tag is-success is-light">${escapeHtml(app.price)}</span>
+        </div>
       </div>
     </div>
 
-    <div class="columns mt-5">
-      <div class="column">
-        <table class="table is-fullwidth">
-          <tbody>
-            <tr><th>Latest version</th><td>${escapeHtml(app.versionName || "Unknown")}</td></tr>
-            <tr><th>Updated on</th><td>${escapeHtml(app.updatedOn || "Unknown")}</td></tr>
-            <tr><th>Installs</th><td>${escapeHtml(app.downloadLabel || formatNumber(app.installs))}</td></tr>
-            <tr><th>Rating</th><td>${escapeHtml(app.ratingLabel || app.rating.toFixed(1))}</td></tr>
-            <tr><th>Price</th><td>${escapeHtml(app.price)}</td></tr>
-            <tr><th>Category</th><td>${escapeHtml(app.category || "Unknown")}</td></tr>
-          </tbody>
-        </table>
-      </div>
+    <div class="box mt-5">
+      <nav class="level">
+        ${[
+          ["Latest version", app.versionName || "Unknown"],
+          ["Updated on", app.updatedOn || "Unknown"],
+          ["Installs", app.downloadLabel || formatNumber(app.installs)],
+          ["Rating", app.ratingLabel || app.rating.toFixed(1)],
+        ].map(([label, value]) => `
+        <div class="level-item has-text-centered">
+          <div>
+            <p class="heading">${escapeHtml(label)}</p>
+            <p class="title is-5">${escapeHtml(value)}</p>
+          </div>
+        </div>`).join("")}
+      </nav>
     </div>
 
-    ${app.changesHtml ? `<h2 class="title is-4">What's new</h2><div class="content">${sanitizePlayHtml(app.changesHtml)}</div>` : ""}
+    ${app.changesHtml ? `
+    <article class="message is-info">
+      <div class="message-header"><p>What's new</p></div>
+      <div class="message-body content">${sanitizePlayHtml(app.changesHtml)}</div>
+    </article>` : ""}
 
-    <h2 class="title is-4">APK downloads</h2>
+    <h2 class="title is-4 mt-6">APK downloads</h2>
     ${downloadNotice(app, country)}
 
-    <h2 class="title is-4">Description</h2>
+    <h2 class="title is-4 mt-6">Description</h2>
     <div class="content">${sanitizePlayHtml(app.descriptionHtml)}</div>
   `);
 }
@@ -229,9 +266,17 @@ interface DownloadViewState {
 
 function downloadView(packageName: string, app: PlayApp | null, country: PlayCountry, state: DownloadViewState): string {
   return `
-    <p><a href="${app ? `/app/${encodeURIComponent(app.packageName)}?gl=${country}` : `/?gl=${country}`}">Back</a></p>
+    <nav class="breadcrumb is-small" aria-label="breadcrumbs">
+      <ul>
+        <li><a href="/?gl=${country}">Search</a></li>
+        ${app ? `<li><a href="/app/${encodeURIComponent(app.packageName)}?gl=${country}">${escapeHtml(app.name)}</a></li>` : ""}
+        <li class="is-active"><a href="#" aria-current="page">APK delivery</a></li>
+      </ul>
+    </nav>
     <h1 class="title">APK delivery</h1>
-    <p class="subtitle">${escapeHtml(app?.name ?? packageName)} · <code>${escapeHtml(packageName)}</code></p>
+    <p class="subtitle is-6 has-text-grey">
+      ${escapeHtml(app?.name ?? packageName)} &middot; <span class="is-family-monospace">${escapeHtml(packageName)}</span>
+    </p>
     ${downloadForm(packageName, country, state.versionCode)}
     ${state.error ? `<div class="notification is-danger is-light">${escapeHtml(state.error)}</div>` : ""}
     ${state.manifest ? deliveryManifestView(state.manifest) : ""}
@@ -252,7 +297,7 @@ function downloadForm(packageName: string, country: PlayCountry, versionCode?: n
         <p class="help">Leave blank for latest. Enter a known older version code to try it; this Play API path does not expose a version history list.</p>
       </div>
       <div class="field">
-        <button class="button is-warning" type="submit">Fetch APK URLs</button>
+        <button class="button is-link" type="submit">Fetch APK URLs</button>
       </div>
     </form>
   `;
@@ -266,28 +311,30 @@ function deliveryManifestView(manifest: DeliveryManifest): string {
     <div class="notification is-success is-light">
       Found ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"} for ${version} with offer type ${manifest.offerType}.
     </div>
-    <table class="table is-fullwidth">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Type</th>
-          <th>Size</th>
-          <th>Hash</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${manifest.files.map((file) => `
+    <div class="table-container">
+      <table class="table is-fullwidth is-striped is-hoverable">
+        <thead>
           <tr>
-            <td>${escapeHtml(file.name)}</td>
-            <td>${escapeHtml(file.type)}</td>
-            <td>${escapeHtml(formatBytes(file.size))}</td>
-            <td><code>${escapeHtml(file.sha256 || file.sha1 || "")}</code></td>
-            <td><a class="button is-small is-link" href="${escapeAttribute(file.url)}">Download</a></td>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Size</th>
+            <th>Hash</th>
+            <th></th>
           </tr>
-        `).join("")}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          ${manifest.files.map((file) => `
+            <tr>
+              <td class="is-family-monospace is-size-7">${escapeHtml(file.name)}</td>
+              <td><span class="tag">${escapeHtml(file.type)}</span></td>
+              <td>${escapeHtml(formatBytes(file.size))}</td>
+              <td><code class="is-size-7">${escapeHtml(file.sha256 || file.sha1 || "")}</code></td>
+              <td><a class="button is-small is-link" href="${escapeAttribute(file.url)}">Download</a></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -300,9 +347,11 @@ function countryOptions(selected: PlayCountry): string {
 
 function notFoundView(): string {
   return `
-    <h1 class="title">Not found</h1>
-    <p>The requested app could not be loaded from Google Play.</p>
-    <p><a href="/">Back to search</a></p>
+    <div class="has-text-centered py-6">
+      <h1 class="title">Not found</h1>
+      <p class="subtitle is-6 has-text-grey">The requested app could not be loaded from Google Play.</p>
+      <a class="button is-link is-light" href="/">Back to search</a>
+    </div>
   `;
 }
 
@@ -311,7 +360,7 @@ function errorView(error: unknown): string {
   return `
     <h1 class="title">Request failed</h1>
     <div class="notification is-danger is-light">${escapeHtml(message)}</div>
-    <p><a href="/">Back to search</a></p>
+    <a class="button is-link is-light" href="/">Back to search</a>
   `;
 }
 
