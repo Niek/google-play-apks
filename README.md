@@ -2,7 +2,7 @@
 
 Minimal Cloudflare Worker that searches Google Play apps, shows current Play listing metadata, and has native Play FDFE APK delivery.
 
-Live URL: [google-play-apks.nivadema.workers.dev](https://google-play-apks.nivadema.workers.dev/)
+Live URL: [apk.niek.nl](https://apk.niek.nl/)
 
 What works now:
 
