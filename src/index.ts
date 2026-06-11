@@ -9,6 +9,7 @@ import {
 import {
   getDeliveryManifest,
   type DeliveryManifest,
+  type PlayFile,
 } from "./fdfe";
 
 const BULMA_CSS = "https://cdn.jsdelivr.net/npm/bulma@1.0.4/css/bulma.min.css";
@@ -132,19 +133,25 @@ function homeView(query: string, country: PlayCountry, apps: PlayApp[]): string 
     <h1 class="title">Search Google Play</h1>
     <p class="subtitle is-6 has-text-grey">Look up apps and fetch APK download URLs straight from Google Play.</p>
     <form class="box" method="get" action="/">
-      <div class="field has-addons">
-        <div class="control is-expanded">
-          <input class="input" type="search" name="q" value="${escapeAttribute(query)}" placeholder="App name or package" autofocus>
-        </div>
-        <div class="control">
-          <div class="select">
-            <select name="gl" aria-label="Google Play country">
-              ${countryOptions(country)}
-            </select>
+      <div class="columns is-variable is-2 is-vcentered">
+        <div class="column">
+          <div class="control">
+            <input class="input" type="search" name="q" value="${escapeAttribute(query)}" placeholder="App name or package" autofocus>
           </div>
         </div>
-        <div class="control">
-          <button class="button is-link" type="submit">Search</button>
+        <div class="column is-narrow">
+          <div class="control">
+            <div class="select is-fullwidth">
+              <select name="gl" aria-label="Google Play country">
+                ${countryOptions(country)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="column is-narrow">
+          <div class="control">
+            <button class="button is-link is-fullwidth" type="submit">Search</button>
+          </div>
         </div>
       </div>
     </form>
@@ -314,8 +321,11 @@ function deliveryManifestView(manifest: DeliveryManifest): string {
     <div class="notification is-success is-light">
       Found ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"} for ${version} with offer type ${manifest.offerType}.
     </div>
-    <div class="table-container">
-      <table class="table is-fullwidth is-striped is-hoverable">
+    <div class="is-hidden-tablet">
+      ${manifest.files.map(mobileFileCard).join("")}
+    </div>
+    <div class="table-container is-hidden-mobile">
+      <table class="table is-fullwidth is-striped is-hoverable is-narrow">
         <thead>
           <tr>
             <th>Name</th>
@@ -338,6 +348,23 @@ function deliveryManifestView(manifest: DeliveryManifest): string {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function mobileFileCard(file: PlayFile): string {
+  const hash = file.sha256 || file.sha1 || "";
+  return `
+    <article class="box">
+      <p class="is-family-monospace is-size-6 mb-3">${escapeHtml(file.name)}</p>
+      <div class="tags mb-3">
+        <span class="tag">${escapeHtml(file.type)}</span>
+        <span class="tag is-light">${escapeHtml(formatBytes(file.size))}</span>
+      </div>
+      ${hash ? `
+      <p class="heading mb-1">Hash</p>
+      <p class="is-family-monospace is-size-7 mb-3"><code>${breakLongTokenHtml(hash)}</code></p>` : ""}
+      <a class="button is-link is-fullwidth" href="${escapeAttribute(file.url)}">Download</a>
+    </article>
   `;
 }
 
@@ -420,6 +447,10 @@ function escapeHtml(value: string): string {
 
 function escapeAttribute(value: string): string {
   return escapeHtml(value);
+}
+
+function breakLongTokenHtml(value: string): string {
+  return escapeHtml(value).replace(/(.{12})/g, "$1<wbr>");
 }
 
 function formatNumber(value: number): string {
