@@ -1,9 +1,16 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "google-play-apks",
+  "account_id": "d99e92492df0494ed614eb4e929a5af1",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    {
+      "binding": "AUTH_CACHE",
+      "id": "e0205220f20b4eb9a973e618d759016e"
+    }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

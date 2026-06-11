@@ -15,7 +15,7 @@ const BULMA_CSS = "https://cdn.jsdelivr.net/npm/bulma@1.0.4/css/bulma.min.css";
 const GITHUB_URL = "https://github.com/Niek/google-play-apks";
 
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const country = normalizeCountry(url.searchParams.get("gl"));
 
@@ -38,7 +38,7 @@ export default {
       if (apiDownloadMatch) {
         const packageName = decodeURIComponent(apiDownloadMatch[1]);
         try {
-          return json(await getDeliveryManifest(packageName, deliveryOptions(url)));
+          return json(await getDeliveryManifest(packageName, deliveryOptions(url), env.AUTH_CACHE));
         } catch (error) {
           return json({ error: errorMessage(error) }, 502);
         }
@@ -53,17 +53,20 @@ export default {
       const downloadMatch = url.pathname.match(/^\/download\/([^/]+)$/);
       if (downloadMatch) {
         const packageName = decodeURIComponent(downloadMatch[1]);
-        const app = await getApp(packageName, country);
+        // The app lookup only feeds the page header, so fetch it alongside the
+        // manifest and render without it if Play metadata is unavailable.
+        const appPromise = getApp(packageName, country).catch(() => null);
         let manifest: DeliveryManifest | null = null;
         let error = "";
         const shouldFetch = url.searchParams.get("fetch") === "1" || parsePositiveInteger(url.searchParams.get("vc")) !== undefined;
         if (shouldFetch) {
           try {
-            manifest = await getDeliveryManifest(packageName, deliveryOptions(url));
+            manifest = await getDeliveryManifest(packageName, deliveryOptions(url), env.AUTH_CACHE);
           } catch (caught) {
             error = errorMessage(caught);
           }
         }
+        const app = await appPromise;
         return html(shell("APK delivery", downloadView(packageName, app, country, {
           versionCode: parsePositiveInteger(url.searchParams.get("vc")),
           manifest,

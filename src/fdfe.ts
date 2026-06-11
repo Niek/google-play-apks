@@ -47,6 +47,10 @@ interface ProtoField {
 }
 
 const PLAY_BASE = "https://android.clients.google.com";
+const AUTH_CACHE_KEY = "aurora-auth";
+const AUTH_CACHE_TTL_SECONDS = 3600;
+
+class PlayAuthExpiredError extends Error {}
 const AURORA_AUTH_URL = "https://auroraoss.com/api/auth";
 const AURORA_USER_AGENT = "com.aurora.store-4.8.3-75";
 const LEGACY_USER_AGENT =
@@ -104,8 +108,27 @@ async function getNativeDetailsWithAuth(
 export async function getDeliveryManifest(
   packageName: string,
   options: DeliveryOptions = {},
+  authCache?: KVNamespace,
 ): Promise<DeliveryManifest> {
+  const cachedAuth = await readCachedAuth(authCache);
+  if (cachedAuth) {
+    try {
+      return await fetchManifestWithAuth(cachedAuth, packageName, options);
+    } catch (error) {
+      if (!(error instanceof PlayAuthExpiredError)) throw error;
+    }
+  }
+
   const auth = await getAuroraAuth();
+  await writeCachedAuth(authCache, auth);
+  return fetchManifestWithAuth(auth, packageName, options);
+}
+
+async function fetchManifestWithAuth(
+  auth: PlayAuth,
+  packageName: string,
+  options: DeliveryOptions,
+): Promise<DeliveryManifest> {
   const nativeDetails = await getNativeDetailsWithAuth(auth, packageName);
   const versionCode = options.versionCode ?? nativeDetails.versionCode;
   const versionName = versionCode === nativeDetails.versionCode ? nativeDetails.versionName : "";
@@ -258,6 +281,9 @@ async function fdfeFetch(
 
   const response = await fetch(url, init);
   const bytes = await readBytesWithLimit(response, 5_000_000);
+  if (response.status === 401) {
+    throw new PlayAuthExpiredError(`Google Play ${path} rejected the auth token with HTTP 401`);
+  }
   if (!response.ok) {
     throw new Error(`Google Play ${path} failed with HTTP ${response.status}: ${decodeSnippet(bytes)}`);
   }
@@ -287,6 +313,26 @@ function playHeaders(auth: PlayAuth): Headers {
   if (auth.encodedTargets) headers.set("x-dfe-encoded-targets", auth.encodedTargets);
   if (auth.phenotype) headers.set("x-dfe-phenotype", auth.phenotype);
   return headers;
+}
+
+async function readCachedAuth(cache: KVNamespace | undefined): Promise<PlayAuth | null> {
+  if (!cache) return null;
+  try {
+    const value: unknown = await cache.get(AUTH_CACHE_KEY, "json");
+    const object = objectValue(value);
+    return object ? parseAuth(object) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedAuth(cache: KVNamespace | undefined, auth: PlayAuth): Promise<void> {
+  if (!cache) return;
+  try {
+    await cache.put(AUTH_CACHE_KEY, JSON.stringify(auth), { expirationTtl: AUTH_CACHE_TTL_SECONDS });
+  } catch {
+    // A failed cache write should not fail the delivery request.
+  }
 }
 
 async function getAuroraAuth(): Promise<PlayAuth> {
