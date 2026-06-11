@@ -2,7 +2,7 @@
 
 Minimal Cloudflare Worker that searches Google Play apps, shows current Play listing metadata, and has native Play FDFE APK delivery.
 
-Repository: [Niek/google-play-apks](https://github.com/Niek/google-play-apks)
+Live URL: [google-play-apks.nivadema.workers.dev](https://google-play-apks.nivadema.workers.dev/)
 
 What works now:
 
