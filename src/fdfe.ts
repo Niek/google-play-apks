@@ -4,6 +4,15 @@ interface NativeDeliveryDetails {
   offerType: number;
 }
 
+export type PlayArchitecture = (typeof PLAY_ARCHITECTURES)[number]["code"];
+
+export const PLAY_ARCHITECTURES = [
+  { code: "arm64", name: "ARM64", platform: "arm64-v8a" },
+  { code: "amd64", name: "AMD64", platform: "x86_64" },
+] as const;
+
+export const DEFAULT_ARCHITECTURE: PlayArchitecture = "arm64";
+
 export interface PlayFile {
   name: string;
   url: string;
@@ -15,6 +24,7 @@ export interface PlayFile {
 
 export interface DeliveryManifest {
   packageName: string;
+  architecture: PlayArchitecture;
   versionCode: number;
   versionName: string;
   offerType: number;
@@ -38,6 +48,7 @@ interface DeliveryOptions {
   versionCode?: number;
   offerType?: number;
   certificateHash?: string;
+  architecture?: PlayArchitecture;
 }
 
 interface ProtoField {
@@ -94,6 +105,20 @@ const DEVICE_PROPERTIES: Record<string, string> = {
   "GL.Extensions": "",
 };
 
+const ARCHITECTURE_DEVICE_OVERRIDES: Partial<Record<PlayArchitecture, Record<string, string>>> = {
+  amd64: {
+    "UserReadableName": "Android Emulator x86_64",
+    "Build.HARDWARE": "ranchu",
+    "Build.RADIO": "unknown",
+    "Build.BOOTLOADER": "unknown",
+    "Build.FINGERPRINT": "google/sdk_gphone64_x86_64/emu64x:15/AP3A.240905.015/12366759:user/release-keys",
+    "Build.DEVICE": "emu64x",
+    "Build.MODEL": "sdk_gphone64_x86_64",
+    "Build.PRODUCT": "sdk_gphone64_x86_64",
+    "Build.ID": "AP3A.240905.015",
+  },
+};
+
 async function getNativeDetailsWithAuth(
   auth: PlayAuth,
   packageName: string,
@@ -110,7 +135,8 @@ export async function getDeliveryManifest(
   options: DeliveryOptions = {},
   authCache?: KVNamespace,
 ): Promise<DeliveryManifest> {
-  const cachedAuth = await readCachedAuth(authCache);
+  const architecture = options.architecture ?? DEFAULT_ARCHITECTURE;
+  const cachedAuth = await readCachedAuth(authCache, architecture);
   if (cachedAuth) {
     try {
       return await fetchManifestWithAuth(cachedAuth, packageName, options);
@@ -119,9 +145,16 @@ export async function getDeliveryManifest(
     }
   }
 
-  const auth = await getAuroraAuth();
-  await writeCachedAuth(authCache, auth);
+  const auth = await getAuroraAuth(architecture);
+  await writeCachedAuth(authCache, architecture, auth);
   return fetchManifestWithAuth(auth, packageName, options);
+}
+
+export function normalizeArchitecture(architecture: string | null): PlayArchitecture {
+  const normalized = (architecture ?? "").toLowerCase();
+  return PLAY_ARCHITECTURES.some((item) => item.code === normalized)
+    ? (normalized as PlayArchitecture)
+    : DEFAULT_ARCHITECTURE;
 }
 
 async function fetchManifestWithAuth(
@@ -129,7 +162,13 @@ async function fetchManifestWithAuth(
   packageName: string,
   options: DeliveryOptions,
 ): Promise<DeliveryManifest> {
-  const nativeDetails = await getNativeDetailsWithAuth(auth, packageName);
+  const architecture = options.architecture ?? DEFAULT_ARCHITECTURE;
+  const nativeDetails = await getNativeDetailsWithAuth(auth, packageName).catch((error) => {
+    if (error instanceof Error && error.message.includes("did not include a versionCode")) {
+      throw new Error(`${error.message}. This can happen when the app is not available for the selected architecture (${architecture}).`);
+    }
+    throw error;
+  });
   const versionCode = options.versionCode ?? nativeDetails.versionCode;
   const versionName = versionCode === nativeDetails.versionCode ? nativeDetails.versionName : "";
   const offerType = options.offerType ?? nativeDetails.offerType;
@@ -142,7 +181,7 @@ async function fetchManifestWithAuth(
     throw new Error("Google Play delivery response did not contain APK URLs");
   }
 
-  return { packageName, versionCode, versionName, offerType, files };
+  return { packageName, architecture, versionCode, versionName, offerType, files };
 }
 
 async function getDeliveryToken(
@@ -315,10 +354,10 @@ function playHeaders(auth: PlayAuth): Headers {
   return headers;
 }
 
-async function readCachedAuth(cache: KVNamespace | undefined): Promise<PlayAuth | null> {
+async function readCachedAuth(cache: KVNamespace | undefined, architecture: PlayArchitecture): Promise<PlayAuth | null> {
   if (!cache) return null;
   try {
-    const value: unknown = await cache.get(AUTH_CACHE_KEY, "json");
+    const value: unknown = await cache.get(authCacheKey(architecture), "json");
     const object = objectValue(value);
     return object ? parseAuth(object) : null;
   } catch {
@@ -326,23 +365,27 @@ async function readCachedAuth(cache: KVNamespace | undefined): Promise<PlayAuth 
   }
 }
 
-async function writeCachedAuth(cache: KVNamespace | undefined, auth: PlayAuth): Promise<void> {
+async function writeCachedAuth(cache: KVNamespace | undefined, architecture: PlayArchitecture, auth: PlayAuth): Promise<void> {
   if (!cache) return;
   try {
-    await cache.put(AUTH_CACHE_KEY, JSON.stringify(auth), { expirationTtl: AUTH_CACHE_TTL_SECONDS });
+    await cache.put(authCacheKey(architecture), JSON.stringify(auth), { expirationTtl: AUTH_CACHE_TTL_SECONDS });
   } catch {
     // A failed cache write should not fail the delivery request.
   }
 }
 
-async function getAuroraAuth(): Promise<PlayAuth> {
+function authCacheKey(architecture: PlayArchitecture): string {
+  return `${AUTH_CACHE_KEY}-${architecture}`;
+}
+
+async function getAuroraAuth(architecture: PlayArchitecture): Promise<PlayAuth> {
   const response = await fetch(AURORA_AUTH_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "user-agent": AURORA_USER_AGENT,
     },
-    body: JSON.stringify(DEVICE_PROPERTIES),
+    body: JSON.stringify(deviceProperties(architecture)),
   });
   const bytes = await readBytesWithLimit(response, 1_000_000);
   if (!response.ok) {
@@ -350,6 +393,15 @@ async function getAuroraAuth(): Promise<PlayAuth> {
   }
 
   return parseAuth(parseJsonObject(new TextDecoder().decode(bytes)));
+}
+
+function deviceProperties(architecture: PlayArchitecture): Record<string, string> {
+  const selected = PLAY_ARCHITECTURES.find((item) => item.code === architecture);
+  return {
+    ...DEVICE_PROPERTIES,
+    ...ARCHITECTURE_DEVICE_OVERRIDES[architecture],
+    Platforms: selected?.platform ?? DEVICE_PROPERTIES.Platforms,
+  };
 }
 
 function parseAuth(input: Record<string, unknown>): PlayAuth {

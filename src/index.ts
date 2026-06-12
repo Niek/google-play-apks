@@ -9,6 +9,9 @@ import {
 import {
   getDeliveryManifest,
   type DeliveryManifest,
+  normalizeArchitecture,
+  PLAY_ARCHITECTURES,
+  type PlayArchitecture,
   type PlayFile,
 } from "./fdfe";
 
@@ -19,6 +22,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const country = normalizeCountry(url.searchParams.get("gl"));
+    const architecture = normalizeArchitecture(url.searchParams.get("arch") ?? url.searchParams.get("architecture"));
 
     try {
       if (url.pathname === "/api/search") {
@@ -48,7 +52,7 @@ export default {
       const appMatch = url.pathname.match(/^\/app\/([^/]+)$/);
       if (appMatch) {
         const app = await getApp(decodeURIComponent(appMatch[1]), country);
-        return html(app ? appPage(app, country) : shell("Not found", notFoundView()));
+        return html(app ? appPage(app, country, architecture) : shell("Not found", notFoundView()));
       }
 
       const downloadMatch = url.pathname.match(/^\/download\/([^/]+)$/);
@@ -68,7 +72,7 @@ export default {
           }
         }
         const app = await appPromise;
-        return html(shell("APK delivery", downloadView(packageName, app, country, {
+        return html(shell("APK delivery", downloadView(packageName, app, country, architecture, {
           versionCode: parsePositiveInteger(url.searchParams.get("vc")),
           manifest,
           error,
@@ -77,7 +81,7 @@ export default {
 
       const query = url.searchParams.get("q")?.trim() ?? "";
       const results = query ? await searchApps(query, country) : [];
-      return html(shell("Google Play APKs", homeView(query, country, results)));
+      return html(shell("Google Play APKs", homeView(query, country, architecture, results)));
     } catch (error) {
       return html(shell("Error", errorView(error)), 502);
     }
@@ -128,7 +132,7 @@ function shell(title: string, body: string): string {
 </html>`;
 }
 
-function homeView(query: string, country: PlayCountry, apps: PlayApp[]): string {
+function homeView(query: string, country: PlayCountry, architecture: PlayArchitecture, apps: PlayApp[]): string {
   return `
     <h1 class="title">Search Google Play</h1>
     <p class="subtitle is-6 has-text-grey">Look up apps and fetch APK download URLs straight from Google Play.</p>
@@ -150,12 +154,21 @@ function homeView(query: string, country: PlayCountry, apps: PlayApp[]): string 
         </div>
         <div class="column is-narrow">
           <div class="control">
+            <div class="select is-fullwidth">
+              <select name="arch" aria-label="Android architecture">
+                ${architectureOptions(architecture)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="column is-narrow">
+          <div class="control">
             <button class="button is-link is-fullwidth" type="submit">Search</button>
           </div>
         </div>
       </div>
     </form>
-    ${query ? resultsView(query, country, apps) : `
+    ${query ? resultsView(query, country, architecture, apps) : `
     <div class="has-text-centered py-6">
       <p class="title is-4 has-text-grey-light">Nothing here yet</p>
       <p class="has-text-grey">Search for an app to get started.</p>
@@ -163,7 +176,7 @@ function homeView(query: string, country: PlayCountry, apps: PlayApp[]): string 
   `;
 }
 
-function resultsView(query: string, country: PlayCountry, apps: PlayApp[]): string {
+function resultsView(query: string, country: PlayCountry, architecture: PlayArchitecture, apps: PlayApp[]): string {
   if (apps.length === 0) {
     return `<div class="notification is-warning is-light">No apps found for <strong>${escapeHtml(query)}</strong>.</div>`;
   }
@@ -172,16 +185,17 @@ function resultsView(query: string, country: PlayCountry, apps: PlayApp[]): stri
     <h2 class="subtitle is-6 has-text-grey">
       ${apps.length} result${apps.length === 1 ? "" : "s"} for <strong>${escapeHtml(query)}</strong>
       <span class="tag is-light">${escapeHtml(country)}</span>
+      <span class="tag is-light">${escapeHtml(architectureLabel(architecture))}</span>
     </h2>
     <div class="fixed-grid has-1-cols">
       <div class="grid">
-        ${apps.map((app) => resultCard(app, country)).join("")}
+        ${apps.map((app) => resultCard(app, country, architecture)).join("")}
       </div>
     </div>
   `;
 }
 
-function resultCard(app: PlayApp, country: PlayCountry): string {
+function resultCard(app: PlayApp, country: PlayCountry, architecture: PlayArchitecture): string {
   return `
     <article class="cell box">
       <div class="media">
@@ -189,7 +203,7 @@ function resultCard(app: PlayApp, country: PlayCountry): string {
           ${app.iconUrl ? `<figure class="image is-64x64"><img src="${escapeAttribute(app.iconUrl)}" alt=""></figure>` : ""}
         </div>
         <div class="media-content">
-          <p class="title is-5 mb-1"><a href="/app/${encodeURIComponent(app.packageName)}?gl=${country}">${escapeHtml(app.name)}</a></p>
+          <p class="title is-5 mb-1"><a href="/app/${encodeURIComponent(app.packageName)}?gl=${country}&arch=${architecture}">${escapeHtml(app.name)}</a></p>
           <p class="is-size-7 has-text-grey mb-2">
             ${escapeHtml(app.developer)} &middot; <span class="is-family-monospace">${escapeHtml(app.packageName)}</span>
           </p>
@@ -204,11 +218,11 @@ function resultCard(app: PlayApp, country: PlayCountry): string {
   `;
 }
 
-function appPage(app: PlayApp, country: PlayCountry): string {
+function appPage(app: PlayApp, country: PlayCountry, architecture: PlayArchitecture): string {
   return shell(app.name, `
     <nav class="breadcrumb is-small" aria-label="breadcrumbs">
       <ul>
-        <li><a href="/?gl=${country}">Search</a></li>
+        <li><a href="/?gl=${country}&arch=${architecture}">Search</a></li>
         <li class="is-active"><a href="#" aria-current="page">${escapeHtml(app.name)}</a></li>
       </ul>
     </nav>
@@ -252,16 +266,16 @@ function appPage(app: PlayApp, country: PlayCountry): string {
     </article>` : ""}
 
     <h2 class="title is-4 mt-6">APK downloads</h2>
-    ${downloadNotice(app, country)}
+    ${downloadNotice(app, country, architecture)}
 
     <h2 class="title is-4 mt-6">Description</h2>
     <div class="content">${sanitizePlayHtml(app.descriptionHtml)}</div>
   `);
 }
 
-function downloadNotice(app: PlayApp, country: PlayCountry): string {
+function downloadNotice(app: PlayApp, country: PlayCountry, architecture: PlayArchitecture): string {
   return `
-    ${downloadForm(app.packageName, country)}
+    ${downloadForm(app.packageName, country, architecture)}
     <div class="buttons">
       <a class="button is-link is-light" href="${escapeAttribute(app.playUrl)}">Open in Play Store</a>
     </div>
@@ -274,12 +288,12 @@ interface DownloadViewState {
   error: string;
 }
 
-function downloadView(packageName: string, app: PlayApp | null, country: PlayCountry, state: DownloadViewState): string {
+function downloadView(packageName: string, app: PlayApp | null, country: PlayCountry, architecture: PlayArchitecture, state: DownloadViewState): string {
   return `
     <nav class="breadcrumb is-small" aria-label="breadcrumbs">
       <ul>
-        <li><a href="/?gl=${country}">Search</a></li>
-        ${app ? `<li><a href="/app/${encodeURIComponent(app.packageName)}?gl=${country}">${escapeHtml(app.name)}</a></li>` : ""}
+        <li><a href="/?gl=${country}&arch=${architecture}">Search</a></li>
+        ${app ? `<li><a href="/app/${encodeURIComponent(app.packageName)}?gl=${country}&arch=${architecture}">${escapeHtml(app.name)}</a></li>` : ""}
         <li class="is-active"><a href="#" aria-current="page">APK delivery</a></li>
       </ul>
     </nav>
@@ -287,24 +301,40 @@ function downloadView(packageName: string, app: PlayApp | null, country: PlayCou
     <p class="subtitle is-6 has-text-grey">
       ${escapeHtml(app?.name ?? packageName)} &middot; <span class="is-family-monospace">${escapeHtml(packageName)}</span>
     </p>
-    ${downloadForm(packageName, country, state.versionCode)}
+    ${downloadForm(packageName, country, architecture, state.versionCode)}
     ${state.error ? `<div class="notification is-danger is-light">${escapeHtml(state.error)}</div>` : ""}
     ${state.manifest ? deliveryManifestView(state.manifest) : ""}
   `;
 }
 
-function downloadForm(packageName: string, country: PlayCountry, versionCode?: number): string {
+function downloadForm(packageName: string, country: PlayCountry, architecture: PlayArchitecture, versionCode?: number): string {
   const idBase = packageName.replace(/[^A-Za-z0-9_-]/g, "-");
   return `
     <form class="box" method="get" action="/download/${encodeURIComponent(packageName)}" data-loading-form>
       <input type="hidden" name="gl" value="${country}">
       <input type="hidden" name="fetch" value="1">
-      <div class="field">
-        <label class="label" for="vc-${idBase}">Version code</label>
-        <div class="control">
-          <input id="vc-${idBase}" class="input" type="number" min="1" name="vc" value="${versionCode ?? ""}" placeholder="latest">
+      <div class="columns is-variable is-2">
+        <div class="column">
+          <div class="field">
+            <label class="label" for="vc-${idBase}">Version code</label>
+            <div class="control">
+              <input id="vc-${idBase}" class="input" type="number" min="1" name="vc" value="${versionCode ?? ""}" placeholder="latest">
+            </div>
+            <p class="help">Leave blank for latest. Enter a known older version code to try it; this Play API path does not expose a version history list.</p>
+          </div>
         </div>
-        <p class="help">Leave blank for latest. Enter a known older version code to try it; this Play API path does not expose a version history list.</p>
+        <div class="column is-narrow">
+          <div class="field">
+            <label class="label" for="arch-${idBase}">Architecture</label>
+            <div class="control">
+              <div class="select is-fullwidth">
+                <select id="arch-${idBase}" name="arch" aria-label="Android architecture">
+                  ${architectureOptions(architecture)}
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="field">
         <button class="button is-link" type="submit">Fetch APK URLs</button>
@@ -319,7 +349,7 @@ function deliveryManifestView(manifest: DeliveryManifest): string {
     : `version code ${manifest.versionCode}`;
   return `
     <div class="notification is-success is-light">
-      Found ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"} for ${version} with offer type ${manifest.offerType}.
+      Found ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"} for ${version}, ${escapeHtml(architectureLabel(manifest.architecture))}, with offer type ${manifest.offerType}.
     </div>
     <div class="is-hidden-tablet">
       ${manifest.files.map(mobileFileCard).join("")}
@@ -373,6 +403,17 @@ function countryOptions(selected: PlayCountry): string {
     const selectedAttribute = code === selected ? " selected" : "";
     return `<option value="${code}"${selectedAttribute}>${code} - ${escapeHtml(name)}</option>`;
   }).join("");
+}
+
+function architectureOptions(selected: PlayArchitecture): string {
+  return PLAY_ARCHITECTURES.map(({ code, name, platform }) => {
+    const selectedAttribute = code === selected ? " selected" : "";
+    return `<option value="${code}"${selectedAttribute}>${escapeHtml(name)} (${escapeHtml(platform)})</option>`;
+  }).join("");
+}
+
+function architectureLabel(architecture: PlayArchitecture): string {
+  return PLAY_ARCHITECTURES.find((item) => item.code === architecture)?.name ?? architecture;
 }
 
 function notFoundView(): string {
@@ -457,11 +498,12 @@ function formatNumber(value: number): string {
   return value ? new Intl.NumberFormat("en-US").format(value) : "Unknown";
 }
 
-function deliveryOptions(url: URL): { versionCode?: number; offerType?: number; certificateHash?: string } {
+function deliveryOptions(url: URL): { versionCode?: number; offerType?: number; certificateHash?: string; architecture?: PlayArchitecture } {
   return {
     versionCode: parsePositiveInteger(url.searchParams.get("vc") ?? url.searchParams.get("versionCode")),
     offerType: parsePositiveInteger(url.searchParams.get("ot") ?? url.searchParams.get("offerType")),
     certificateHash: url.searchParams.get("ch")?.trim() || undefined,
+    architecture: normalizeArchitecture(url.searchParams.get("arch") ?? url.searchParams.get("architecture")),
   };
 }
 

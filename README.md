@@ -28,9 +28,10 @@ npm run dev
 
 If `vc` is omitted, the Worker detects the latest version code through `/fdfe/details`.
 Google Play does not expose a version-history list through this FDFE path, so older versions require a known `vc` and may or may not still be deliverable.
+Use `arch=arm64` for `arm64-v8a` delivery or `arch=amd64` for `x86_64` delivery. If omitted, the Worker uses `arm64`.
 If `ot` is omitted, the Worker uses the offer type from Google Play details. Aurora treats this as Play response data, not as a fixed UI dropdown; `ot` is kept only as an advanced API override.
 
 ```sh
 curl 'http://localhost:8787/api/download/org.thoughtcrime.securesms'
-curl 'http://localhost:8787/api/download/org.thoughtcrime.securesms?vc=123456&ot=1'
+curl 'http://localhost:8787/api/download/org.thoughtcrime.securesms?arch=amd64&vc=123456&ot=1'
 ```
