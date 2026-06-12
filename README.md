@@ -15,6 +15,7 @@ What works now:
 Native APK delivery:
 
 - Uses Aurora's anonymous auth dispenser, then Google Play APIs: `/fdfe/details`, `/fdfe/purchase`, and `/fdfe/delivery`.
+- Includes shared-library dependencies exposed by Play details, such as Chrome's Trichrome Library APK.
 - Does not use APKMirror or other external APK sources.
 - Does not require a local auth secret.
 

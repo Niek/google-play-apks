@@ -2,6 +2,12 @@ interface NativeDeliveryDetails {
   versionCode: number;
   versionName: string;
   offerType: number;
+  dependentLibraries: DependentLibrary[];
+}
+
+interface DependentLibrary {
+  packageName: string;
+  versionCode: number;
 }
 
 export type PlayArchitecture = (typeof PLAY_ARCHITECTURES)[number]["code"];
@@ -16,7 +22,7 @@ export const DEFAULT_ARCHITECTURE: PlayArchitecture = "arm64";
 export interface PlayFile {
   name: string;
   url: string;
-  type: "base" | "split" | "obb" | "patch";
+  type: "base" | "lib" | "split" | "obb" | "patch";
   size: number;
   sha1: string;
   sha256: string;
@@ -176,12 +182,32 @@ async function fetchManifestWithAuth(
   const deliveryToken = await getDeliveryToken(auth, packageName, versionCode, offerType, options.certificateHash);
   const deliveryBytes = await getDeliveryBytes(auth, packageName, versionCode, offerType, deliveryToken, options.certificateHash);
   const files = parseDeliveryFiles(packageName, versionCode, deliveryBytes);
+  const dependentLibraryFiles = versionCode === nativeDetails.versionCode
+    ? await getDependentLibraryFiles(auth, nativeDetails.dependentLibraries)
+    : [];
 
-  if (files.length === 0) {
+  if (files.length === 0 && dependentLibraryFiles.length === 0) {
     throw new Error("Google Play delivery response did not contain APK URLs");
   }
 
-  return { packageName, architecture, versionCode, versionName, offerType, files };
+  return { packageName, architecture, versionCode, versionName, offerType, files: [...dependentLibraryFiles, ...files] };
+}
+
+async function getDependentLibraryFiles(auth: PlayAuth, dependentLibraries: DependentLibrary[]): Promise<PlayFile[]> {
+  const files: PlayFile[] = [];
+  for (const library of dependentLibraries) {
+    const deliveryBytes = await getDeliveryBytes(auth, library.packageName, library.versionCode, 1);
+    const libraryFiles = parseDeliveryFiles(library.packageName, library.versionCode, deliveryBytes).map((file) => ({
+      ...file,
+      name: file.name === "base.apk" ? `${library.packageName}.apk` : `${library.packageName}-${file.name}`,
+      type: "lib" as const,
+    }));
+    if (libraryFiles.length === 0) {
+      throw new Error(`Google Play delivery response did not contain APK URLs for ${library.packageName}`);
+    }
+    files.push(...libraryFiles);
+  }
+  return files;
 }
 
 async function getDeliveryToken(
@@ -204,13 +230,12 @@ async function getDeliveryBytes(
   packageName: string,
   versionCode: number,
   offerType: number,
-  deliveryToken: string,
+  deliveryToken?: string,
   certificateHash?: string,
 ): Promise<Uint8Array> {
-  return fdfeFetch("GET", "/fdfe/delivery", auth, {
-    ...deliveryParams(packageName, versionCode, offerType, certificateHash),
-    dtok: deliveryToken,
-  });
+  const params = deliveryParams(packageName, versionCode, offerType, certificateHash);
+  if (deliveryToken) params.dtok = deliveryToken;
+  return fdfeFetch("GET", "/fdfe/delivery", auth, params);
 }
 
 function deliveryParams(packageName: string, versionCode: number, offerType: number, certificateHash?: string): Record<string, string> {
@@ -238,7 +263,24 @@ function parseDetailsItem(packageName: string, item: ProtoField[]): NativeDelive
     versionCode,
     versionName: firstString(appDetails, 4),
     offerType: firstVarintNumber(offerFields, 8) || 1,
+    dependentLibraries: parseDependentLibraries(appDetails),
   };
+}
+
+function parseDependentLibraries(appDetails: ProtoField[]): DependentLibrary[] {
+  const dependenciesBytes = firstBytes(appDetails, 34);
+  if (!dependenciesBytes) return [];
+
+  const dependencies = parseMessage(dependenciesBytes);
+  return allBytes(dependencies, 13)
+    .map((libraryBytes) => {
+      const library = parseMessage(libraryBytes);
+      return {
+        packageName: firstString(library, 1),
+        versionCode: firstVarintNumber(library, 2),
+      };
+    })
+    .filter((library) => library.packageName && library.versionCode);
 }
 
 function parseDeliveryFiles(packageName: string, versionCode: number, bytes: Uint8Array): PlayFile[] {
