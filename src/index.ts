@@ -22,7 +22,8 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const country = normalizeCountry(url.searchParams.get("gl"));
-    const architecture = normalizeArchitecture(url.searchParams.get("arch") ?? url.searchParams.get("architecture"));
+    const options = deliveryOptions(url);
+    const architecture = options.architecture;
 
     try {
       if (url.pathname === "/api/search") {
@@ -43,7 +44,7 @@ export default {
       if (apiDownloadMatch) {
         const packageName = decodeURIComponent(apiDownloadMatch[1]);
         try {
-          return json(await getDeliveryManifest(packageName, deliveryOptions(url), env.AUTH_CACHE));
+          return json(await getDeliveryManifest(packageName, options, env.AUTH_CACHE));
         } catch (error) {
           return json({ error: errorMessage(error) }, 502);
         }
@@ -63,17 +64,17 @@ export default {
         const appPromise = getApp(packageName, country).catch(() => null);
         let manifest: DeliveryManifest | null = null;
         let error = "";
-        const shouldFetch = url.searchParams.get("fetch") === "1" || parsePositiveInteger(url.searchParams.get("vc")) !== undefined;
+        const shouldFetch = shouldFetchDownload(url, options);
         if (shouldFetch) {
           try {
-            manifest = await getDeliveryManifest(packageName, deliveryOptions(url), env.AUTH_CACHE);
+            manifest = await getDeliveryManifest(packageName, options, env.AUTH_CACHE);
           } catch (caught) {
             error = errorMessage(caught);
           }
         }
         const app = await appPromise;
         return html(shell("APK delivery", downloadView(packageName, app, country, architecture, {
-          versionCode: parsePositiveInteger(url.searchParams.get("vc")),
+          options,
           manifest,
           error,
         })));
@@ -275,7 +276,7 @@ function appPage(app: PlayApp, country: PlayCountry, architecture: PlayArchitect
 
 function downloadNotice(app: PlayApp, country: PlayCountry, architecture: PlayArchitecture): string {
   return `
-    ${downloadForm(app.packageName, country, architecture)}
+    ${downloadForm(app.packageName, country, { architecture })}
     <div class="buttons">
       <a class="button is-link is-light" href="${escapeAttribute(app.playUrl)}">Open in Play Store</a>
     </div>
@@ -283,7 +284,7 @@ function downloadNotice(app: PlayApp, country: PlayCountry, architecture: PlayAr
 }
 
 interface DownloadViewState {
-  versionCode: number | undefined;
+  options: ParsedDeliveryOptions;
   manifest: DeliveryManifest | null;
   error: string;
 }
@@ -301,24 +302,26 @@ function downloadView(packageName: string, app: PlayApp | null, country: PlayCou
     <p class="subtitle is-6 has-text-grey">
       ${escapeHtml(app?.name ?? packageName)} &middot; <span class="is-family-monospace">${escapeHtml(packageName)}</span>
     </p>
-    ${downloadForm(packageName, country, architecture, state.versionCode)}
+    ${downloadForm(packageName, country, state.options)}
     ${state.error ? `<div class="notification is-danger is-light">${escapeHtml(state.error)}</div>` : ""}
-    ${state.manifest ? deliveryManifestView(state.manifest) : ""}
+    ${state.manifest ? deliveryManifestView(state.manifest, apiDownloadPath(packageName, state.options)) : ""}
   `;
 }
 
-function downloadForm(packageName: string, country: PlayCountry, architecture: PlayArchitecture, versionCode?: number): string {
+function downloadForm(packageName: string, country: PlayCountry, options: ParsedDeliveryOptions): string {
   const idBase = packageName.replace(/[^A-Za-z0-9_-]/g, "-");
   return `
     <form class="box" method="get" action="/download/${encodeURIComponent(packageName)}" data-loading-form>
       <input type="hidden" name="gl" value="${country}">
       <input type="hidden" name="fetch" value="1">
+      ${hiddenInput("ot", options.offerType)}
+      ${hiddenInput("ch", options.certificateHash)}
       <div class="columns is-variable is-2">
         <div class="column">
           <div class="field">
             <label class="label" for="vc-${idBase}">Version code</label>
             <div class="control">
-              <input id="vc-${idBase}" class="input" type="number" min="1" name="vc" value="${versionCode ?? ""}" placeholder="latest">
+              <input id="vc-${idBase}" class="input" type="number" min="1" name="vc" value="${options.versionCode ?? ""}" placeholder="latest">
             </div>
             <p class="help">Leave blank for latest. Enter a known older version code to try it; this Play API path does not expose a version history list.</p>
           </div>
@@ -329,7 +332,7 @@ function downloadForm(packageName: string, country: PlayCountry, architecture: P
             <div class="control">
               <div class="select is-fullwidth">
                 <select id="arch-${idBase}" name="arch" aria-label="Android architecture">
-                  ${architectureOptions(architecture)}
+                  ${architectureOptions(options.architecture)}
                 </select>
               </div>
             </div>
@@ -343,13 +346,20 @@ function downloadForm(packageName: string, country: PlayCountry, architecture: P
   `;
 }
 
-function deliveryManifestView(manifest: DeliveryManifest): string {
+function deliveryManifestView(manifest: DeliveryManifest, apiUrl: string): string {
   const version = manifest.versionName
     ? `version ${escapeHtml(manifest.versionName)} (code ${manifest.versionCode})`
     : `version code ${manifest.versionCode}`;
   return `
     <div class="notification is-success is-light">
-      Found ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"} for ${version}, ${escapeHtml(architectureLabel(manifest.architecture))}, with offer type ${manifest.offerType}.
+      <div class="columns is-variable is-2 is-vcentered">
+        <div class="column">
+          Found ${manifest.files.length} file${manifest.files.length === 1 ? "" : "s"} for ${version}, ${escapeHtml(architectureLabel(manifest.architecture))}, with offer type ${manifest.offerType}.
+        </div>
+        <div class="column is-narrow has-text-right">
+          <a class="button is-small is-success is-light" href="${escapeAttribute(apiUrl)}">API URL</a>
+        </div>
+      </div>
     </div>
     <div class="is-hidden-tablet">
       ${manifest.files.map(mobileFileCard).join("")}
@@ -414,6 +424,14 @@ function architectureOptions(selected: PlayArchitecture): string {
 
 function architectureLabel(architecture: PlayArchitecture): string {
   return PLAY_ARCHITECTURES.find((item) => item.code === architecture)?.name ?? architecture;
+}
+
+function apiDownloadPath(packageName: string, options: ParsedDeliveryOptions): string {
+  const params = new URLSearchParams({ arch: options.architecture });
+  if (options.versionCode !== undefined) params.set("vc", String(options.versionCode));
+  if (options.offerType !== undefined) params.set("ot", String(options.offerType));
+  if (options.certificateHash) params.set("ch", options.certificateHash);
+  return `/api/download/${encodeURIComponent(packageName)}?${params}`;
 }
 
 function notFoundView(): string {
@@ -498,13 +516,33 @@ function formatNumber(value: number): string {
   return value ? new Intl.NumberFormat("en-US").format(value) : "Unknown";
 }
 
-function deliveryOptions(url: URL): { versionCode?: number; offerType?: number; certificateHash?: string; architecture?: PlayArchitecture } {
+interface ParsedDeliveryOptions {
+  versionCode?: number;
+  offerType?: number;
+  certificateHash?: string;
+  architecture: PlayArchitecture;
+}
+
+function deliveryOptions(url: URL): ParsedDeliveryOptions {
   return {
     versionCode: parsePositiveInteger(url.searchParams.get("vc") ?? url.searchParams.get("versionCode")),
     offerType: parsePositiveInteger(url.searchParams.get("ot") ?? url.searchParams.get("offerType")),
     certificateHash: url.searchParams.get("ch")?.trim() || undefined,
     architecture: normalizeArchitecture(url.searchParams.get("arch") ?? url.searchParams.get("architecture")),
   };
+}
+
+function shouldFetchDownload(url: URL, options: ParsedDeliveryOptions): boolean {
+  return url.searchParams.get("fetch") === "1"
+    || options.versionCode !== undefined
+    || options.offerType !== undefined
+    || options.certificateHash !== undefined;
+}
+
+function hiddenInput(name: string, value: string | number | undefined): string {
+  return value === undefined
+    ? ""
+    : `<input type="hidden" name="${name}" value="${escapeAttribute(String(value))}">`;
 }
 
 function parsePositiveInteger(value: string | null): number | undefined {
