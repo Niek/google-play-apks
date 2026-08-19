@@ -64,10 +64,11 @@ interface ProtoField {
 }
 
 const PLAY_BASE = "https://android.clients.google.com";
-const AUTH_CACHE_KEY = "aurora-auth-emulator-v2";
+const AUTH_CACHE_KEY = "aurora-auth-emulator-v3";
 const AUTH_CACHE_TTL_SECONDS = 3600;
 
 class PlayAuthExpiredError extends Error {}
+class PlayAuthRateLimitedError extends Error {}
 const AURORA_AUTH_URL = "https://auroraoss.com/api/auth";
 const AURORA_USER_AGENT = "com.aurora.store-4.8.3-75";
 const LEGACY_USER_AGENT =
@@ -147,13 +148,14 @@ export async function getDeliveryManifest(
     try {
       return await fetchManifestWithAuth(cachedAuth, packageName, options);
     } catch (error) {
-      if (!(error instanceof PlayAuthExpiredError)) throw error;
+      if (!(error instanceof PlayAuthExpiredError) && !(error instanceof PlayAuthRateLimitedError)) throw error;
     }
   }
 
   const auth = await getAuroraAuth(architecture);
+  const manifest = await fetchManifestWithAuth(auth, packageName, options);
   await writeCachedAuth(authCache, architecture, auth);
-  return fetchManifestWithAuth(auth, packageName, options);
+  return manifest;
 }
 
 export function normalizeArchitecture(architecture: string | null): PlayArchitecture {
@@ -370,6 +372,9 @@ async function fdfeFetch(
   const bytes = await readBytesWithLimit(response, 5_000_000);
   if (response.status === 401) {
     throw new PlayAuthExpiredError(`Google Play ${path} rejected the auth token with HTTP 401`);
+  }
+  if (response.status === 429) {
+    throw new PlayAuthRateLimitedError(`Google Play ${path} failed with HTTP 429: ${decodeSnippet(bytes)}`);
   }
   if (!response.ok) {
     throw new Error(`Google Play ${path} failed with HTTP ${response.status}: ${decodeSnippet(bytes)}`);
