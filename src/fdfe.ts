@@ -64,7 +64,7 @@ interface ProtoField {
 }
 
 const PLAY_BASE = "https://android.clients.google.com";
-const AUTH_CACHE_KEY = "aurora-auth-pixel";
+const AUTH_CACHE_KEY = "aurora-auth-emulator-v2";
 const AUTH_CACHE_TTL_SECONDS = 3600;
 
 class PlayAuthExpiredError extends Error {}
@@ -109,6 +109,20 @@ const DEVICE_PROPERTIES: Record<string, string> = {
   "Client": "android-google",
   "TimeZone": "UTC-10",
   "GL.Extensions": "",
+};
+
+const ARCHITECTURE_DEVICE_OVERRIDES: Partial<Record<PlayArchitecture, Record<string, string>>> = {
+  amd64: {
+    "UserReadableName": "Android Emulator x86_64",
+    "Build.HARDWARE": "ranchu",
+    "Build.RADIO": "unknown",
+    "Build.BOOTLOADER": "unknown",
+    "Build.FINGERPRINT": "google/sdk_gphone64_x86_64/emu64x:15/AP3A.240905.015/12366759:user/release-keys",
+    "Build.DEVICE": "emu64x",
+    "Build.MODEL": "sdk_gphone64_x86_64",
+    "Build.PRODUCT": "sdk_gphone64_x86_64",
+    "Build.ID": "AP3A.240905.015",
+  },
 };
 
 async function getNativeDetailsWithAuth(
@@ -156,19 +170,25 @@ async function fetchManifestWithAuth(
 ): Promise<DeliveryManifest> {
   const architecture = options.architecture ?? DEFAULT_ARCHITECTURE;
   const nativeDetails = await getNativeDetailsWithAuth(auth, packageName).catch((error) => {
+    if (options.versionCode && error instanceof Error && error.message.includes("/fdfe/details failed with HTTP 404")) {
+      return null;
+    }
     if (error instanceof Error && error.message.includes("did not include a versionCode")) {
       throw new Error(`${error.message}. This can happen when the app is not available for the selected architecture (${architecture}).`);
     }
     throw error;
   });
-  const versionCode = options.versionCode ?? nativeDetails.versionCode;
-  const versionName = versionCode === nativeDetails.versionCode ? nativeDetails.versionName : "";
-  const offerType = options.offerType ?? nativeDetails.offerType;
+  const versionCode = options.versionCode ?? nativeDetails?.versionCode;
+  if (!versionCode) throw new Error(`Google Play details did not include a versionCode for ${packageName}`);
+  const versionName = versionCode === nativeDetails?.versionCode ? nativeDetails.versionName : "";
+  const offerType = options.offerType ?? nativeDetails?.offerType ?? 1;
 
-  const deliveryToken = await getDeliveryToken(auth, packageName, versionCode, offerType, options.certificateHash);
+  const deliveryToken = nativeDetails
+    ? await getDeliveryToken(auth, packageName, versionCode, offerType, options.certificateHash)
+    : undefined;
   const deliveryBytes = await getDeliveryBytes(auth, packageName, versionCode, offerType, deliveryToken, options.certificateHash);
   const files = parseDeliveryFiles(packageName, versionCode, deliveryBytes);
-  const dependentLibraryFiles = versionCode === nativeDetails.versionCode
+  const dependentLibraryFiles = nativeDetails && versionCode === nativeDetails.versionCode
     ? await getDependentLibraryFiles(auth, nativeDetails.dependentLibraries)
     : [];
 
@@ -427,6 +447,7 @@ function deviceProperties(architecture: PlayArchitecture): Record<string, string
   const selected = PLAY_ARCHITECTURES.find((item) => item.code === architecture);
   return {
     ...DEVICE_PROPERTIES,
+    ...ARCHITECTURE_DEVICE_OVERRIDES[architecture],
     Platforms: selected?.platform ?? DEVICE_PROPERTIES.Platforms,
   };
 }
