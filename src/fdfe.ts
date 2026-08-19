@@ -64,7 +64,7 @@ interface ProtoField {
 }
 
 const PLAY_BASE = "https://android.clients.google.com";
-const AUTH_CACHE_KEY = "aurora-auth";
+const AUTH_CACHE_KEY = "aurora-auth-pixel";
 const AUTH_CACHE_TTL_SECONDS = 3600;
 
 class PlayAuthExpiredError extends Error {}
@@ -109,20 +109,6 @@ const DEVICE_PROPERTIES: Record<string, string> = {
   "Client": "android-google",
   "TimeZone": "UTC-10",
   "GL.Extensions": "",
-};
-
-const ARCHITECTURE_DEVICE_OVERRIDES: Partial<Record<PlayArchitecture, Record<string, string>>> = {
-  amd64: {
-    "UserReadableName": "Android Emulator x86_64",
-    "Build.HARDWARE": "ranchu",
-    "Build.RADIO": "unknown",
-    "Build.BOOTLOADER": "unknown",
-    "Build.FINGERPRINT": "google/sdk_gphone64_x86_64/emu64x:15/AP3A.240905.015/12366759:user/release-keys",
-    "Build.DEVICE": "emu64x",
-    "Build.MODEL": "sdk_gphone64_x86_64",
-    "Build.PRODUCT": "sdk_gphone64_x86_64",
-    "Build.ID": "AP3A.240905.015",
-  },
 };
 
 async function getNativeDetailsWithAuth(
@@ -441,7 +427,6 @@ function deviceProperties(architecture: PlayArchitecture): Record<string, string
   const selected = PLAY_ARCHITECTURES.find((item) => item.code === architecture);
   return {
     ...DEVICE_PROPERTIES,
-    ...ARCHITECTURE_DEVICE_OVERRIDES[architecture],
     Platforms: selected?.platform ?? DEVICE_PROPERTIES.Platforms,
   };
 }
