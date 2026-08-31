@@ -66,9 +66,12 @@ interface ProtoField {
 const PLAY_BASE = "https://android.clients.google.com";
 const AUTH_CACHE_KEY = "aurora-auth-emulator-v3";
 const AUTH_CACHE_TTL_SECONDS = 3600;
+const MAX_AUTH_RETRIES = 3;
 
-class PlayAuthExpiredError extends Error {}
-class PlayAuthRateLimitedError extends Error {}
+class RetryableDeliveryError extends Error {}
+class PlayAuthExpiredError extends RetryableDeliveryError {}
+class PlayAuthRateLimitedError extends RetryableDeliveryError {}
+class TransientDeliveryError extends RetryableDeliveryError {}
 const AURORA_AUTH_URL = "https://auroraoss.com/api/auth";
 const AURORA_USER_AGENT = "com.aurora.store-4.8.3-75";
 const LEGACY_USER_AGENT =
@@ -143,19 +146,22 @@ export async function getDeliveryManifest(
   authCache?: KVNamespace,
 ): Promise<DeliveryManifest> {
   const architecture = options.architecture ?? DEFAULT_ARCHITECTURE;
-  const cachedAuth = await readCachedAuth(authCache, architecture);
-  if (cachedAuth) {
+  let auth = await readCachedAuth(authCache, architecture);
+
+  for (let attempt = 0; attempt <= MAX_AUTH_RETRIES; attempt += 1) {
     try {
-      return await fetchManifestWithAuth(cachedAuth, packageName, options);
+      const usingCachedAuth = auth !== null;
+      const selectedAuth = auth ?? await getAuroraAuth(architecture);
+      const manifest = await fetchManifestWithAuth(selectedAuth, packageName, options);
+      if (!usingCachedAuth) await writeCachedAuth(authCache, architecture, selectedAuth);
+      return manifest;
     } catch (error) {
-      if (!(error instanceof PlayAuthExpiredError) && !(error instanceof PlayAuthRateLimitedError)) throw error;
+      if (!(error instanceof RetryableDeliveryError) || attempt === MAX_AUTH_RETRIES) throw error;
+      auth = null;
     }
   }
 
-  const auth = await getAuroraAuth(architecture);
-  const manifest = await fetchManifestWithAuth(auth, packageName, options);
-  await writeCachedAuth(authCache, architecture, auth);
-  return manifest;
+  throw new Error("Google Play delivery exhausted authentication retries");
 }
 
 export function normalizeArchitecture(architecture: string | null): PlayArchitecture {
@@ -376,6 +382,12 @@ async function fdfeFetch(
   if (response.status === 429) {
     throw new PlayAuthRateLimitedError(`Google Play ${path} failed with HTTP 429: ${decodeSnippet(bytes)}`);
   }
+  if (response.status === 400 && decodeSnippet(bytes).includes("DF-DFERH-01")) {
+    throw new TransientDeliveryError(`Google Play ${path} failed with HTTP 400: ${decodeSnippet(bytes)}`);
+  }
+  if (response.status >= 500) {
+    throw new TransientDeliveryError(`Google Play ${path} failed with HTTP ${response.status}: ${decodeSnippet(bytes)}`);
+  }
   if (!response.ok) {
     throw new Error(`Google Play ${path} failed with HTTP ${response.status}: ${decodeSnippet(bytes)}`);
   }
@@ -441,6 +453,9 @@ async function getAuroraAuth(architecture: PlayArchitecture): Promise<PlayAuth> 
     body: JSON.stringify(deviceProperties(architecture)),
   });
   const bytes = await readBytesWithLimit(response, 1_000_000);
+  if (response.status === 429 || response.status >= 500) {
+    throw new TransientDeliveryError(`Aurora anonymous auth failed with HTTP ${response.status}: ${decodeSnippet(bytes)}`);
+  }
   if (!response.ok) {
     throw new Error(`Aurora anonymous auth failed with HTTP ${response.status}: ${decodeSnippet(bytes)}`);
   }
