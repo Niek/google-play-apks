@@ -64,7 +64,7 @@ interface ProtoField {
 }
 
 const PLAY_BASE = "https://android.clients.google.com";
-const AUTH_CACHE_KEY = "aurora-auth-emulator-v3";
+const AUTH_CACHE_KEY = "aurora-auth-emulator-v4";
 const AUTH_CACHE_TTL_SECONDS = 3600;
 const MAX_AUTH_RETRIES = 3;
 
@@ -105,7 +105,8 @@ const DEVICE_PROPERTIES: Record<string, string> = {
   "Screen.Height": "2424",
   "Platforms": "arm64-v8a",
   "SharedLibraries": "com.google.android.gms",
-  "Features": "android.hardware.touchscreen,android.hardware.wifi,android.hardware.location,android.hardware.camera,com.google.android.feature.GOOGLE_EXPERIENCE",
+  // Chrome implies a Bluetooth feature requirement through its permissions.
+  "Features": "android.hardware.touchscreen,android.hardware.wifi,android.hardware.location,android.hardware.camera,android.hardware.bluetooth,android.hardware.bluetooth_le,com.google.android.feature.GOOGLE_EXPERIENCE",
   "Locales": "en_US",
   "CellOperator": "310",
   "SimOperator": "38",
